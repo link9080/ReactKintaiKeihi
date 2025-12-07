@@ -16,41 +16,15 @@ type ResultProps = {
   results: WorkRow[];
 };
 
-export default function WorkPage() {
+export default function Result({ results }: ResultProps) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<WorkRow[]>([
-    {
-      id: "1",
-      date: "2025-01-01",
-      start: "09:00",
-      end: "18:00",
-      breakStart: "12:00",
-      rakuPattern: "パターンA",
-      rakuPatternCombo: ["パターンA", "パターンB", "パターンC"],
-      changed: false,
-    },
-    {
-      id: "2",
-      date: "2025-01-02",
-      start: "10:00",
-      end: "19:00",
-      breakStart: "13:00",
-      rakuPattern: "パターンB",
-      rakuPatternCombo: ["パターンA", "パターンB", "パターンC"],
-      changed: false,
-    },
-  ]);
+  const [rows, setRows] = useState<WorkRow[]>(results);
 
   const handleChange = (id: string, field: keyof WorkRow, value: string) => {
     setRows((prev) =>
       prev.map((r) =>
         r.id === id
-          ? {
-              ...r,
-              [field]: value,
-              changed:
-                field === "date" ? r.changed : true,
-            }
+          ? { ...r, [field]: value, changed: field === "date" ? r.changed : true }
           : r
       )
     );
@@ -58,6 +32,7 @@ export default function WorkPage() {
 
   const handleSubmit = async () => {
     const changedRows = rows.filter((r) => r.changed);
+
     if (changedRows.length === 0) {
       toast("変更された行がありません");
       return;
@@ -74,9 +49,9 @@ export default function WorkPage() {
       const data = await res.json();
       console.log(data);
 
-      toast.success("送信が完了しました");
+      toast("送信が完了しました");
     } catch (e) {
-      toast.error("送信中にエラーが発生しました");
+      toast("送信中にエラーが発生しました");
     } finally {
       setLoading(false);
     }
@@ -140,7 +115,9 @@ export default function WorkPage() {
                 <td className="border p-2">
                   <select
                     value={row.rakuPattern}
-                    onChange={(e) => handleChange(row.id, "rakuPattern", e.target.value)}
+                    onChange={(e) =>
+                      handleChange(row.id, "rakuPattern", e.target.value)
+                    }
                     className="w-full border p-1"
                   >
                     {row.rakuPatternCombo.map((opt) => (
