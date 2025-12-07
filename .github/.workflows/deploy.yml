@@ -3,6 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [ main ]   # ← main に push したら自動デプロイ
+  workflow_dispatch:  # ← 手動実行を有効化
 
 permissions:
   contents: read
