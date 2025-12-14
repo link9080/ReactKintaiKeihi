@@ -23,7 +23,10 @@ export default function Login({ onSuccess }: LoginProps) {
       const res = await fetch(apiUri, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ 
+          action : "login",
+          password : password 
+        }),
       });
 
       const data = await res.json();
