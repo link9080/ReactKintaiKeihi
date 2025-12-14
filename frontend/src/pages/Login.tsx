@@ -23,17 +23,17 @@ export default function Login({ onSuccess }: LoginProps) {
       const res = await fetch(apiUri, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          action : "login",
-          password : password 
+        body: JSON.stringify({
+          action: "login",
+          password: password
         }),
       });
 
       const data = await res.json();
 
-      if (data.authorized) {
-        toast.success("ログイン成功！");
-        onSuccess(); // ← ここで Result ページへ！
+      if (data.login) {
+        toast.success("ログイン成功！",{ duration: 20 });
+        onSuccess();
       } else {
         toast.error("パスワードが違います");
       }
@@ -69,11 +69,10 @@ export default function Login({ onSuccess }: LoginProps) {
         <button
           onClick={handleLogin}
           disabled={loading}
-          className={`w-full text-white py-2 rounded transition ${
-            loading
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-blue-500 hover:bg-blue-600"
-          }`}
+          className={`w-full text-white py-2 rounded transition ${loading
+            ? "bg-gray-400 cursor-not-allowed"
+            : "bg-blue-500 hover:bg-blue-600"
+            }`}
         >
           {loading ? (
             <div className="flex justify-center items-center">
