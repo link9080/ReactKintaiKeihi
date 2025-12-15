@@ -222,13 +222,13 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
             # 在宅フラグ設定
             for ptn in raku_ptns:
                 ptn['zaitaku'] = False  # 初期化
-                if ptn['ptn_name'] == "在宅" and ptn['id'] in (input.rakuraku1, input.rakuraku2):
+                if ptn['label'] == "在宅" and ptn['id'] in (input.rakuraku1, input.rakuraku2):
                     input.zaitaku = True
                     break
             already_registered = any(d.startswith(input.date) for d in created_days)
             if already_registered:
                 logger.info(input.date+"入力済")
-                return "すでに楽々精算に入力済の日付です\n楽楽精算入力終了します。"
+                return "楽楽精算に入力済の日付です。"
             if input.rakuraku1:
                 # チェックボックスを取得して選択
                 chks = wait.until(EC.presence_of_all_elements_located((By.NAME, "kakutei")))
@@ -431,8 +431,8 @@ def input_recoru(driver:webdriver, wait:WebDriverWait, input:TemplateInput):
         logger.info(f"タイトル: {driver.title}")
         logger.debug(driver.page_source[:1000])  # ソースが長いときは先頭のみ
         raise
-
-    time.sleep(WAIT_TIME)  
+    time.sleep(WAIT_TIME)
+    return "recoru入力完了"
 def breakTimewrite(_tr, driver:webdriver, wait:WebDriverWait, input:TemplateInput):
     try:
         # 休憩編集アイコンを取得
@@ -560,6 +560,7 @@ def lambda_handler(event, context):
         if action == "login":
             password = body.get("password")
             ok = password == config['DEFAULT']["reco_password"]
+            logger.info(f"ログイン{ok}")
 
             return {
                 "statusCode": 200,
@@ -595,38 +596,54 @@ def lambda_handler(event, context):
                 }
 
             # rows から TemplateInput を生成
-            # 例: フロントから1行ずつ送られてくる前提
-            r = rows[0]
-            input = TemplateInput(
-                date     = r["date"],
-                start    = r["start"],
-                end      = r["end"],
-                break_start = r["breakStart"],
-                rakuraku1 = r["raku1"],
-                rakuraku2 = r["raku2"]
-            )
+            results = []
+            
+            for r in rows:
+                try:
+                    result = {"id": r.get("id"), "msgs": []}
+                    logger.info(r)
+                    result['id'] = r["id"]
+                    input = TemplateInput("")  # raw_text は空でOK
+                    input.date = r["date"]
+                    input.start = r["start"]
+                    input.end = r["end"]
+                    input.break_start = r["breakStart"]
+                    input.rakuraku1 = r["rakuPattern"]
+                    input.rakuraku2 = r["rakuPattern2"]
 
-            # 日付整形（YY/MM/DD → YYYY/MM/DD）
-            input.date = datetime.strptime(
-                f"{datetime.now().year}-{input.date}", "%Y-%m-%d"
-            ).strftime("%Y/%m/%d")
+                    # 日付整形（YY/MM/DD → YYYY/MM/DD）
+                    input.date = datetime.strptime(
+                        input.date, "%Y-%m-%d"
+                    ).strftime("%Y/%m/%d")
 
-            # 楽楽精算
-            driver, wait = initChrome()
-            login_raku(driver, wait)
-            get_input_rakuraku_patterns(driver, wait, input)
-            driver.quit()
+                    # 楽楽精算
+                    driver, wait = initChrome()
+                    login_raku(driver, wait)
+                    msg1 = get_input_rakuraku_patterns(driver, wait, input)
+                    logger.info(msg1)
+                    if isinstance(msg1,str):
+                        result["msgs"].append(msg1)
+                    result["msgs"].append("楽楽精算入力完了")
+                    driver.quit()
 
-            # recoru
-            driver, wait = initChrome()
-            login_recoru(driver, wait)
-            input_recoru(driver, wait, input)
-            driver.quit()
+                    # recoru
+                    driver, wait = initChrome()
+                    login_recoru(driver, wait)
+                    recoru_msg = input_recoru(driver, wait, input)
+                    if recoru_msg:
+                        result["msgs"].append(recoru_msg)
+                    result["msgs"].append("成功")
+                    driver.quit()
+                except Exception as e:
+                        result["msgs"].append(f"エラー: {e}")
+                        continue
+                results.append(result)
+                    
 
             return {
                 "statusCode": 200,
                 "headers": headers,
-                "body": json.dumps({"message": "ok", "count": len(rows)})
+                "body": json.dumps(results)
             }
 
         # ===========================

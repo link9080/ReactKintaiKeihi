@@ -11,6 +11,7 @@ export type WorkRow = {
   rakuPatternCombo: string[];
   rakuPattern2: string;
   rakuPatternCombo2: string[];
+  msgs?: string[];
 };
 
 export type RakuPtn = {
@@ -20,6 +21,11 @@ export type RakuPtn = {
 
 type ResultProps = {
   results: RakuPtn[];
+};
+
+type ApiResult = {
+  id: string;
+  msgs: string[];
 };
 
 const apiUri = import.meta.env.VITE_API_URI;
@@ -67,6 +73,8 @@ export default function Result({ results }: ResultProps) {
       )
     );
   };
+
+
   // 必須項目キー一覧
   const requiredKeys: (keyof WorkRow)[] = [
     "date",
@@ -84,11 +92,19 @@ export default function Result({ results }: ResultProps) {
       return v !== null && v !== undefined && String(v).trim() !== "";
     });
 
-  // --- 送信処理（既存のまま） ---
+  // --- 送信処理---
+  const applyApiResults = (apiResults: ApiResult[]) => {
+    setRows(prev =>
+      prev.map(row => {
+        const hit = apiResults.find(r => r.id === row.id);
+        return hit ? { ...row, msgs: hit.msgs } : row;
+      })
+    );
+  };
+
+
   const handleSubmit = async () => {
-    // 変更されていて、かつ必須項目が全部入っている行だけ
-    const changedRows = rows
-      .filter(isFilled);
+    const changedRows = rows.filter(isFilled);
 
     if (changedRows.length === 0) {
       toast("変更された行がありません");
@@ -104,20 +120,31 @@ export default function Result({ results }: ResultProps) {
       });
 
       const data = await res.json();
-      console.log(data);
+      if (!Array.isArray(data)) {
+        const msg =
+          typeof data === "object" && data.error !== null && "message" in data.error
+            ? String((data as any).error)
+            : "不正なレスポンスが返されました";
+
+        toast.error(msg);
+        return;
+      }
+
+      applyApiResults(data);
 
       toast("送信が完了しました");
-    } catch (e) {
+    } catch {
       toast("送信中にエラーが発生しました");
     } finally {
       setLoading(false);
     }
   };
 
+
   return (
     <div className="min-h-screen bg-gray-100 p-6 flex justify-center items-start">
       <Toaster />
-      <div className="bg-white shadow-md rounded p-6 w-full max-w-4xl">
+      <div className="bg-white shadow-md rounded p-6 w-full max-w-5xl">
         <h1 className="text-2xl font-bold mb-6">勤怠データ編集</h1>
 
         <button
@@ -126,87 +153,109 @@ export default function Result({ results }: ResultProps) {
         >
           ＋ 行を追加
         </button>
-
-        <table className="w-full border-collapse border text-sm">
-          <thead>
-            <tr className="bg-gray-200 text-left">
-              <th className="border p-2">日付</th>
-              <th className="border p-2">開始</th>
-              <th className="border p-2">終了</th>
-              <th className="border p-2">休憩開始</th>
-              <th className="border p-2">楽楽精算パターン</th>
-              <th className="border p-2">楽楽精算パターン2</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td className="border p-2">
-                  <input
-                    type="date"
-                    value={row.date}
-                    onChange={(e) => handleChange(row.id, "date", e.target.value)}
-                    className="w-full border p-1"
-                  />
-                </td>
-                <td className="border p-2">
-                  <input
-                    type="time"
-                    value={row.start}
-                    onChange={(e) => handleChange(row.id, "start", e.target.value)}
-                    className="w-full border p-1"
-                  />
-                </td>
-                <td className="border p-2">
-                  <input
-                    type="time"
-                    value={row.end}
-                    onChange={(e) => handleChange(row.id, "end", e.target.value)}
-                    className="w-full border p-1"
-                  />
-                </td>
-                <td className="border p-2">
-                  <input
-                    type="time"
-                    value={row.breakStart}
-                    onChange={(e) => handleChange(row.id, "breakStart", e.target.value)}
-                    className="w-full border p-1"
-                  />
-                </td>
-                <td className="border p-2">
-                  <select
-                    value={row.rakuPattern}
-                    onChange={(e) =>
-                      handleChange(row.id, "rakuPattern", e.target.value)
-                    }
-                    className="w-full border p-1"
-                  >
-                    {results.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="border p-2">
-                  <select
-                    value={row.rakuPattern2}
-                    onChange={(e) =>
-                      handleChange(row.id, "rakuPattern2", e.target.value)
-                    }
-                    className="w-full border p-1"
-                  >
-                    {results.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-[700px] border-collapse border text-sm">
+            <thead>
+              <tr className="bg-gray-200 text-left">
+                <th className="border p-2">日付</th>
+                <th className="border p-2">開始</th>
+                <th className="border p-2">終了</th>
+                <th className="border p-2">休憩開始</th>
+                <th className="border p-2">楽楽精算パターン</th>
+                <th className="border p-2">楽楽精算パターン2</th>
+                <th className="border p-2">結果</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td className="border p-2">
+                    <input
+                      type="date"
+                      value={row.date}
+                      onChange={(e) => handleChange(row.id, "date", e.target.value)}
+                      className="w-full border p-1"
+                    />
+                  </td>
+                  <td className="border p-2">
+                    <input
+                      type="time"
+                      value={row.start}
+                      onChange={(e) => handleChange(row.id, "start", e.target.value)}
+
+                      className="w-full border p-1"
+                    />
+                  </td>
+                  <td className="border p-2">
+                    <input
+                      type="time"
+                      value={row.end}
+                      onChange={(e) => handleChange(row.id, "end", e.target.value)}
+                      className="w-full border p-1"
+                    />
+                  </td>
+                  <td className="border p-2">
+                    <input
+                      type="time"
+                      value={row.breakStart}
+                      onChange={(e) => handleChange(row.id, "breakStart", e.target.value)}
+                      className="w-full border p-1"
+                    />
+                  </td>
+                  <td className="border p-2">
+                    <select
+                      value={row.rakuPattern}
+                      onChange={(e) =>
+                        handleChange(row.id, "rakuPattern", e.target.value)
+                      }
+
+                      className="w-full border p-1"
+                    >
+                      {results.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="border p-2">
+                    <select
+                      value={row.rakuPattern2}
+                      onChange={(e) =>
+                        handleChange(row.id, "rakuPattern2", e.target.value)
+                      }
+
+                      className="w-full border p-1"
+                    >
+                      {results.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="border p-2">
+                    {row.msgs && row.msgs.length > 0 ? (
+                      <div
+                        className={`text-sm whitespace-nowrap ${row.msgs.includes("成功")
+                            ? "text-green-600"
+                            : "text-red-600"
+                          }`}
+                      >
+                        {row.msgs.map((m, i) => (
+                          <div key={i}>{m}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-gray-400">-</span>
+                    )}
+                  </td>
+
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         <div className="mt-6 text-center">
           <button
