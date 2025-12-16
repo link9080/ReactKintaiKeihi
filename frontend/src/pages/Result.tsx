@@ -29,6 +29,8 @@ type ApiResult = {
 };
 
 const apiUri = import.meta.env.VITE_API_URI;
+// --- タイムアウト時間の設定 (ミリ秒) ---
+const REQUEST_TIMEOUT_MS = 600000; // 60秒に延長
 
 export default function Result({ results }: ResultProps) {
   const [loading, setLoading] = useState(false);
@@ -85,6 +87,7 @@ export default function Result({ results }: ResultProps) {
     "rakuPattern2",
   ];
 
+
   // 空チェック用関数
   const isFilled = (row: WorkRow) =>
     requiredKeys.every((key) => {
@@ -112,12 +115,24 @@ export default function Result({ results }: ResultProps) {
     }
 
     setLoading(true);
+    // タイムアウト用コントローラーをバッチごとに生成
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(apiUri, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "submitRows", rows: changedRows }),
+        signal: controller.signal, // タイムアウトシグナルを渡す
       });
+
+      clearTimeout(timeoutId); // 成功したらタイマー解除
+
+      if (!res.ok) {
+        throw new Error(`HTTPエラー: ${res.status}`);
+      }
 
       const data = await res.json();
       if (!Array.isArray(data)) {
@@ -134,6 +149,7 @@ export default function Result({ results }: ResultProps) {
 
       toast("送信が完了しました");
     } catch {
+      clearTimeout(timeoutId); // エラー発生時もタイマー解除
       toast("送信中にエラーが発生しました");
     } finally {
       setLoading(false);
@@ -238,8 +254,8 @@ export default function Result({ results }: ResultProps) {
                     {row.msgs && row.msgs.length > 0 ? (
                       <div
                         className={`text-sm whitespace-nowrap ${row.msgs.includes("成功")
-                            ? "text-green-600"
-                            : "text-red-600"
+                          ? "text-green-600"
+                          : "text-red-600"
                           }`}
                       >
                         {row.msgs.map((m, i) => (
