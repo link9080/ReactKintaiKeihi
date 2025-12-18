@@ -1,73 +1,105 @@
-# React + TypeScript + Vite
+# 勤怠・経費 自動登録システム
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+楽楽精算・recoru への勤怠／経費入力を自動化する Web アプリです。  
+フロントエンド（React）からリクエストを送信し、  
+AWS Lambda + SQS + Selenium を用いて非同期で処理を行います。
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## システム構成
 
-## React Compiler
+[ Browser (React) ]
+|
+| submitRows
+v
+[ Lambda API ]
+|
+| SendMessage
+v
+[ SQS Queue ]
+|
+| trigger
+v
+[ Lambda Worker (Selenium) ]
+|
+| PutItem
+v
+[ DynamoDB ]
+^
+| pollResults
+[ Lambda API ]
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 主な技術スタック
 
-## Expanding the ESLint configuration
+- フロントエンド
+  - React (Vite)
+  - TypeScript
+  - react-hot-toast
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- バックエンド
+  - AWS Lambda (Python 3.11)
+  - Amazon SQS
+  - Amazon DynamoDB（TTL 1日）
+  - Selenium + Headless Chrome（Lambda Layer）
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 処理フロー
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+1. フロントで勤怠データを入力し「送信」
+2. API Lambda が `requestId` を即時返却
+3. フロントは 3秒ごとに `pollResults` を呼び出し
+4. Worker Lambda が SQS 経由で Selenium 処理を実行
+5. 結果を DynamoDB に保存
+6. 完了後、フロントに結果を表示
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+---
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## ディレクトリ構成（例）
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+.
+├── frontend/
+│ ├── src/
+│ └── README.md
+├── lambda/
+│ ├── api/
+│ │ └── lambda_function.py
+│ ├── worker/
+│ │ └── regist_kintai_keihi.py
+│ └── layers/
+│ └── selenium-chrome-layer.zip
+└── README.md
+
+---
+
+## 環境変数
+
+### フロントエンド（.env）
+
+```env
+VITE_API_URI=https://xxxxxxxx.lambda-url.ap-northeast-1.on.aws/
+
+Lambda（API / Worker 共通）
+
+RESULT_TABLE_NAME : DynamoDB テーブル名
+
+（必要に応じて）ログイン情報は config.ini に定義
+DynamoDB 設定
+
+パーティションキー: requestId (string)
+
+TTL 属性: ttl
+
+TTL 有効期限: 現在時刻 + 1日
+
+SQS 設定
+
+Standard Queue
+
+Worker Lambda をトリガーとして設定
+
+IAM ロールに以下権限が必要
+sqs:SendMessage
+sqs:ReceiveMessage
+sqs:DeleteMessage
+sqs:GetQueueAttributes
