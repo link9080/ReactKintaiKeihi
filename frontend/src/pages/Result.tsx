@@ -29,8 +29,9 @@ type ApiResult = {
 };
 
 const apiUri = import.meta.env.VITE_API_URI;
-// --- タイムアウト時間の設定 (ミリ秒) ---
-const REQUEST_TIMEOUT_MS = 600000; // 60秒に延長
+const POLLING_INTERVAL_MS = 3000; // 3秒ごとに結果を問い合わせる
+const MAX_POLLING_ATTEMPTS = 60; // 最大試行回数 (3秒 * 60回 = 180秒 = 3分まで待機)
+
 
 export default function Result({ results }: ResultProps) {
   const [loading, setLoading] = useState(false);
@@ -105,6 +106,62 @@ export default function Result({ results }: ResultProps) {
     );
   };
 
+  // --- ポーリング処理のヘルパー関数 ---
+  const startPolling = (requestId: string): Promise<ApiResult[]> => {
+    let attempts = 0;
+
+    // toast.promise を使用した Promise ラッパー
+    const pollingPromise = new Promise<ApiResult[]>((resolve, reject) => {
+      const intervalId = setInterval(async () => {
+        attempts++;
+
+        try {
+          // Lambda (3) への問い合わせ：apiUriに action: "pollResults" を送信
+          const res = await fetch(apiUri, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            // ★ ここで action: "pollResults" と jobId を送信 ★
+            body: JSON.stringify({ action: "pollResults", requestId: requestId }),
+          });
+
+          // ... (省略: res.ok, data.status のチェックロジックは以前と同じ) ...
+
+          const data = await res.json();
+
+          if (data.status === 'COMPLETED') {
+            clearInterval(intervalId);
+            resolve(data.results);
+            return;
+          }
+
+          if (data.status === "FAILED") {
+            clearInterval(intervalId);
+            reject(new Error(data.errorMessage ?? "処理失敗"));
+            return;
+          }
+
+          // ... (FAILED, タイムアウトのチェック) ...
+          if (attempts >= MAX_POLLING_ATTEMPTS) {
+            clearInterval(intervalId);
+            reject(new Error("タイムアウトしました"));
+            return;
+          }
+
+        } catch (error) {
+          // ... (エラー処理) ...
+        }
+      }, POLLING_INTERVAL_MS);
+    });
+
+    return toast.promise(
+      pollingPromise,
+      {
+        loading: `処理を実行中です (requestId: ${requestId})`,
+        success: 'すべての処理が正常に完了しました！',
+        error: (err) => `処理失敗: ${err.message}`, // reject された際のエラーメッセージを表示
+      }
+    );
+  };
 
   const handleSubmit = async () => {
     const changedRows = rows.filter(isFilled);
@@ -115,41 +172,39 @@ export default function Result({ results }: ResultProps) {
     }
 
     setLoading(true);
-    // タイムアウト用コントローラーをバッチごとに生成
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+
     try {
       const res = await fetch(apiUri, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "submitRows", rows: changedRows }),
-        signal: controller.signal, // タイムアウトシグナルを渡す
       });
 
-      clearTimeout(timeoutId); // 成功したらタイマー解除
 
       if (!res.ok) {
         throw new Error(`HTTPエラー: ${res.status}`);
       }
 
-      const data = await res.json();
-      if (!Array.isArray(data)) {
-        const msg =
-          typeof data === "object" && data.error !== null && "message" in data.error
-            ? String((data as any).error)
-            : "不正なレスポンスが返されました";
+      const reqData = await res.json();
+      const requestId = reqData.requestId;
 
-        toast.error(msg);
+      if (!requestId) {
+        toast.error("サーバーからJob IDが返されませんでした。");
         return;
       }
 
-      applyApiResults(data);
+      toast.success(`処理を受け付けました (requestId ${requestId})。結果待ちを開始します...`);
+
+      // 2. Job ID を使って結果のポーリングを開始
+      const finalApiResults = await startPolling(requestId);
+
+      // 3. 結果をUIに反映
+      applyApiResults(finalApiResults);
+
+      toast.success("すべての処理が完了し、結果を反映しました。");
 
       toast("送信が完了しました");
     } catch {
-      clearTimeout(timeoutId); // エラー発生時もタイマー解除
       toast("送信中にエラーが発生しました");
     } finally {
       setLoading(false);

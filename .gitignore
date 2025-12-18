@@ -29,3 +29,12 @@ backend/config.ini
 backend/__pycache__
 backend/requests
 backend/requests-2.32.4.dist-info
+backend/urllib3
+backend/urllib3-2.4.0.dist-info
+backend/idna-3.10.dist-info
+backend/idna
+backend/charset_normalizer-3.4.2.dist-info
+backend/charset_normalizer
+backend/certifi-2025.6.15.dist-info
+backend/certifi
+backend/bin

@@ -1,0 +1,631 @@
+import json
+import time
+import configparser
+import requests
+import os
+import boto3
+from datetime import datetime, timedelta
+from headless_chrome import create_driver
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.common.keys import Keys
+from TemplateInput import TemplateInput
+import logging
+
+# ログ設定
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+RESULT_TABLE_NAME = os.environ["TABLE"] 
+
+# DynamoDB リソースを初期化 (グローバルに実行すると高速化されます)
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table(RESULT_TABLE_NAME)
+WAIT_TIME = 2
+
+# Lambdaのデフォルトログハンドラーは既に設定されているので、
+# 追加設定が不要なケースが多いが、フォーマット指定を追加する場合は以下
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+# 設定ファイル読み込み
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+def format_to_yyyymmdd(date_str: str) -> str:
+    return datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y%m%d")
+
+def login_raku(driver, wait):
+    driver.get(config['DEFAULT']['raku_url'])  # rakuurlの部分
+    time.sleep(WAIT_TIME)
+    logger.info(f"url:{driver.current_url}title:{driver.title}")
+    # 企業IDを入力
+    kigyo_element = wait.until(EC.presence_of_element_located((By.NAME, "loginId")))
+    kigyo_element.send_keys(config['DEFAULT']['raku_login_id'])
+
+    pass_element = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+    pass_element.send_keys(config['DEFAULT']['raku_password'])
+    pass_element.send_keys(Keys.ENTER)
+
+    time.sleep(WAIT_TIME)  # ページ遷移待ちなど適宜調整
+    logger.info("ログイン成功")
+
+    frame = wait.until(EC.presence_of_element_located((By.NAME, "main")))
+    driver.switch_to.frame(frame)
+
+def login_recoru(driver:webdriver, wait:WebDriverWait):
+    try:
+        # recoruのURLにアクセス
+        driver.get(config['DEFAULT']['reco_url'])
+        logger.info(f"url:{driver.current_url}title:{driver.title}")
+
+        # 企業IDを入力
+        kigyo_element = wait.until(lambda drv: drv.find_element(By.ID, "contractId"))
+        kigyo_element.send_keys(config['DEFAULT']["reco_kigyo"])
+
+        # メールアドレスを入力
+        mail_element = wait.until(lambda drv: drv.find_element(By.ID, "authId"))
+        mail_element.send_keys(config['DEFAULT']["reco_login_id"])
+
+        # パスワードを入力してEnterキー
+        pass_element = wait.until(lambda drv: drv.find_element(By.ID, "password"))
+        pass_element.send_keys(config['DEFAULT']["reco_password"])
+        pass_element.send_keys(Keys.ENTER)
+
+        # 少し待機（ログイン処理のため）
+        time.sleep(WAIT_TIME)
+        logger.info("ログイン成功")
+
+        # 「勤務表」リンクをクリック
+        edit_page = wait.until(lambda drv: drv.find_element(By.LINK_TEXT, "勤務表"))
+        edit_page.click()
+
+        # ページ遷移のため少し待機
+        time.sleep(WAIT_TIME)
+        logger.info("勤務表")
+    except Exception as e:
+        logger.exception("recoruログイン処理でエラー発生")
+        raise
+def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:TemplateInput = None):
+    try:
+        # 「交通費精算」が作成されていないか確認
+        try:
+            # 先に「交通費精算」があるかチェック
+            koutuhi = driver.find_elements(By.CSS_SELECTOR, "span[title='交通費精算']")
+            if koutuhi:  # 見つかった場合
+                raise TimeoutException("交通費精算が存在しない為 badge 処理をスキップ")
+            # ui-c-badge または szb-badge を探す
+            badges = wait.until(
+                EC.presence_of_all_elements_located(
+                    (By.CSS_SELECTOR, ".ui-c-badge, .szb-badge")
+                )
+            )
+            # 最初の要素を判定
+            first_badge = badges[0]
+            badge_class = first_badge.get_attribute("class")
+
+            if "ui-c-badge" in badge_class:
+                logger.info("ui-c-badge を取得しました")
+            elif "szb-badge" in badge_class:
+                logger.info("szb-badge を取得しました")
+            else:
+                logger.info(f"想定外のbadgeを取得: {badge_class}")
+            first_badge.click()
+            
+        except TimeoutException:
+            # 「ui-c-badge」が見つからなかった場合は「交通費精算」のリンクをクリック
+            logger.info("badgeが見つからなかったため、交通費精算をクリックします")
+            newpage = wait.until(EC.presence_of_all_elements_located((By.LINK_TEXT, "交通費精算")))[0]
+            newpage.click()
+
+        time.sleep(WAIT_TIME)
+
+        # ウィンドウ切り替え
+        driver.switch_to.window(driver.window_handles[-1])
+        logger.info(f"楽楽清算-一時保存-{driver.current_url}")
+
+        # 修正画面へ移動
+        if "initializeView" not in driver.current_url:
+            try:
+                # ①「修正」リンクを探す
+                links = driver.find_elements(By.LINK_TEXT, "修正")
+                if links:
+                    logger.info("『修正』リンクをクリックします")
+                    links[0].click()
+
+                else:
+                    # ② .w_denpyo_l を探す
+                    try:
+                        logger.info("『修正』リンクが無いので .w_denpyo_l をクリックします")
+                        target = WebDriverWait(driver, WAIT_TIME).until(
+                            EC.element_to_be_clickable((By.CLASS_NAME, "w_denpyo_l"))
+                        )
+                        target.click()
+
+                    except TimeoutException:
+                        # ③ 絶対パスで指定された要素をクリック
+                        logger.info("『修正』『.w_denpyo_l』が無いため XPath の要素をクリックします")
+                        target = WebDriverWait(driver, WAIT_TIME).until(
+                            EC.element_to_be_clickable(
+                                (By.XPATH, "/html/body/form/div[1]/div[2]/div/div/table/tbody/tr[2]/td[2]/a")
+                            )
+                        )
+                        target.click()
+
+                time.sleep(WAIT_TIME)
+                driver.switch_to.window(driver.window_handles[-1])
+
+            except Exception as e:
+                logger.error(f"修正画面への遷移に失敗しました: {e}")
+                return "『修正』も『.w_denpyo_l』も見つかりませんでした"
+                # 必要ならここで raise するか return で中断
+
+        else:
+            logger.info("すでに通勤費画面です")
+
+        logger.info("楽楽清算-通勤費画面")
+        # 明細ウィンドウのハンドルを取得（最後のウィンドウ）
+        meisai_window = wait.until(
+            lambda drv: drv.window_handles[-1]
+        )
+        # 既存日付の取得
+        try:
+            daylists = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "labelColorDefault")))
+        except TimeoutException:
+            daylists = []
+        
+        created_days = [d.text for d in daylists]
+
+        # マイパターンボタンをクリック
+        meisai_insert_buttons = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".meisai-insert-button")))
+        # ボタンの情報を出力
+        logger.info(f"取得したmeisai-insert-buttonの数:{len(meisai_insert_buttons)}")
+        target_found = False
+
+        for idx, btn in enumerate(meisai_insert_buttons):
+            logger.info(f"[{idx}] text: {btn.text}, tag: {btn.tag_name}, class: {btn.get_attribute('class')}")
+            if "マイパターン" in btn.text:
+                logger.info(f"→ マイパターンボタンをクリックします: index {idx}")
+                btn.click()
+                target_found = True
+                break
+
+        if not target_found:
+            logger.info("マイパターンボタンが見つかりませんでした。")
+
+        time.sleep(WAIT_TIME)
+        driver.switch_to.window(driver.window_handles[-1])
+        logger.info(f"ウィンドウ数: {len(driver.window_handles)}")
+        logger.info(f"現在のURL: {driver.current_url}")
+        logger.info(f"タイトル: {driver.title}")
+
+
+        # チェックボックス情報を取得
+        trs = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "d_hover")))
+        raku_ptns = []
+
+        for tr in trs:
+            ptn = {}
+            checkbox = tr.find_element(By.NAME, "kakutei")
+            ptn['id'] = checkbox.get_attribute("value")
+            tds = tr.find_elements(By.TAG_NAME, "td")
+            if len(tds) > 1:
+                ptn['label'] = tds[1].text
+            raku_ptns.append(ptn)
+        
+        if input:
+            logger.info("入力開始")
+            # 在宅フラグ設定
+            for ptn in raku_ptns:
+                ptn['zaitaku'] = False  # 初期化
+                if ptn['label'] == "在宅" and ptn['id'] in (input.rakuraku1, input.rakuraku2):
+                    input.zaitaku = True
+                    break
+            already_registered = any(d.startswith(input.date) for d in created_days)
+            if already_registered:
+                logger.info(input.date+"入力済")
+                return "楽楽精算に入力済の日付です。"
+            if input.rakuraku1:
+                # チェックボックスを取得して選択
+                chks = wait.until(EC.presence_of_all_elements_located((By.NAME, "kakutei")))
+                for chk in chks:
+                    if chk.get_attribute("value") == input.rakuraku1:
+                        chk.click()
+                        break
+
+                # 次へクリック
+                nextbtn = wait.until(EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, ".common-btn.accesskeyFix.kakutei.d_marginLeft5")))
+                nextbtn.click()
+
+                time.sleep(WAIT_TIME)
+
+                # 日付入力
+                date_inputs = wait.until(EC.presence_of_all_elements_located((By.NAME, "meisaiDate")))
+                date_inputs[1].send_keys(input.date)
+
+                # 明細追加押下
+                nextbtn = wait.until(EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, ".button.button--l.button-primary.accesskeyFix.kakutei")))
+                nextbtn.click()
+
+                time.sleep(WAIT_TIME)
+
+                driver.switch_to.window(meisai_window)
+
+                # マイパターンボタンをクリック
+                meisai_insert_buttons = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".meisai-insert-button")))
+                # ボタンの情報を出力
+                logger.info(f"取得したmeisai-insert-buttonの数:{len(meisai_insert_buttons)}")
+                target_found = False
+
+                for idx, btn in enumerate(meisai_insert_buttons):
+                    logger.info(f"[{idx}] text: {btn.text}, tag: {btn.tag_name}, class: {btn.get_attribute('class')}")
+                    if "マイパターン" in btn.text:
+                        logger.info(f"→ マイパターンボタンをクリックします: index {idx}")
+                        btn.click()
+                        target_found = True
+                        break
+                time.sleep(WAIT_TIME)
+                driver.switch_to.window(driver.window_handles[-1])
+
+            if input.rakuraku2:
+                    # チェックボックスを取得して選択
+                    chks = wait.until(EC.presence_of_all_elements_located((By.NAME, "kakutei")))
+                    for chk in chks:
+                        if chk.get_attribute("value") == input.rakuraku2:
+                            chk.click()
+                            break
+
+                    # 次へクリック
+                    nextbtn = wait.until(EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, ".common-btn.accesskeyFix.kakutei.d_marginLeft5")))
+                    nextbtn.click()
+
+                    time.sleep(WAIT_TIME)
+
+                    # 日付入力
+                    date_inputs = wait.until(EC.presence_of_all_elements_located((By.NAME, "meisaiDate")))
+                    date_inputs[1].send_keys(input.date)
+
+                    # 明細追加押下
+                    nextbtn = wait.until(EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, ".button.button--l.button-primary.accesskeyFix.kakutei")))
+                    nextbtn.click()
+
+                    time.sleep(WAIT_TIME)
+
+                    driver.switch_to.window(meisai_window)
+
+                    # マイパターンボタンをクリック
+                    meisai_insert_buttons = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".meisai-insert-button")))
+                    # ボタンの情報を出力
+                    logger.info(f"取得したmeisai-insert-buttonの数:{len(meisai_insert_buttons)}")
+                    target_found = False
+
+                    for idx, btn in enumerate(meisai_insert_buttons):
+                        logger.info(f"[{idx}] text: {btn.text}, tag: {btn.tag_name}, class: {btn.get_attribute('class')}")
+                        if "マイパターン" in btn.text:
+                            logger.info(f"→ マイパターンボタンをクリックします: index {idx}")
+                            btn.click()
+                            target_found = True
+                            break
+                    time.sleep(WAIT_TIME)
+                    driver.switch_to.window(driver.window_handles[-1])
+            # 「common-btn accesskeyClose」ボタンが存在するかチェック
+            close_buttons = WebDriverWait(driver, 10).until(
+                lambda drv: drv.find_elements(By.CSS_SELECTOR, ".common-btn.accesskeyClose")
+            )
+
+            if len(close_buttons) > 0:
+                close_buttons[0].click()
+                time.sleep(WAIT_TIME)  # ChromeDriverUtil.sleep() の代わり
+                window = WebDriverWait(driver, 10).until(lambda drv: drv.window_handles[-1])
+                driver.switch_to.window(window)
+
+            # 「button save accesskeyReturn」ボタンが存在するかチェックしてクリック
+            save_buttons = WebDriverWait(driver, 10).until(
+                lambda drv: drv.find_elements(By.CSS_SELECTOR, ".button.save.accesskeyReturn")
+            )
+
+            if len(save_buttons) > 0:
+                save_buttons[0].click()
+    except TimeoutException as te:
+        logger.info(te)
+        raise
+    except NoSuchElementException as ne:
+        logger.info(ne)
+        raise
+    except Exception as e:
+        logger.info(e)
+        raise
+    return raku_ptns
+
+def input_recoru(driver:webdriver, wait:WebDriverWait, input:TemplateInput):
+    try:
+        tr_class = f"1717-{format_to_yyyymmdd(input.date)}"  # 適宜クラス名補正
+        _tr = wait.until(lambda drv: drv.find_element(By.CSS_SELECTOR, f"[class='{tr_class}']"))
+
+        # 開始
+        if input.start:
+            # 勤務区分
+            kbn = _tr.find_element(By.TAG_NAME, "select")
+            select = Select(kbn)
+            opt = select.first_selected_option.get_attribute("value")
+
+            if not opt:
+                if input.zaitaku:
+                    select.select_by_index(2)
+                    logger.info(f"勤務区分に『{select.first_selected_option.text}』を選択（在宅）")
+                else:
+                    select.select_by_index(1)
+                    logger.info(f"勤務区分に『{select.first_selected_option.text}』を選択（出社）")
+            else:
+                logger.info(f"既に勤務区分に『{select.first_selected_option.text}』が選択されている")
+
+            start_class_prefix = f"ID-worktimeStart-{format_to_yyyymmdd(input.date)}-1"
+            candidates = [
+                f"{start_class_prefix} worktimeStart timeText edited",
+                f"{start_class_prefix} bg-err worktimeStart timeText edited",
+                f"{start_class_prefix} bg-err worktimeStart timeText",
+                f"{start_class_prefix} worktimeStart timeText"
+            ]
+
+            for cls in candidates:
+                elements = _tr.find_elements(By.CSS_SELECTOR, f"[class='{cls}']")
+                logger.debug(f"クラス '{cls}' の要素数: {len(elements)}")
+                if elements:
+                    logger.info(f"勤務開始入力用の要素をクラス '{cls}' で発見")
+                    start = elements[0]
+                    start.clear()
+                    start.send_keys(input.start)
+                    logger.info(f"勤務開始時間を {start.get_attribute('value')} に設定しました")
+                    break
+            else:
+                logger.warning("勤務開始の入力欄が見つかりませんでした")
+
+        # 終了
+        if input.end:
+            end_class_prefix = f"ID-worktimeEnd-{format_to_yyyymmdd(input.date)}-1"
+            candidates = [
+                f"{end_class_prefix} worktimeEnd timeText edited",
+                f"{end_class_prefix} bg-err worktimeEnd timeText edited",
+                f"{end_class_prefix} bg-err worktimeEnd timeText",
+                f"{end_class_prefix} worktimeEnd timeText"
+            ]
+
+            for cls in candidates:
+                elements = _tr.find_elements(By.CSS_SELECTOR, f"[class='{cls}']")
+                if elements:
+                    logger.info(f"勤務終了入力用の要素をクラス '{cls}' で発見")
+                    end = elements[0]
+                    end.clear()
+                    end.send_keys(input.end)
+                    logger.info(f"勤務終了時間を {end.get_attribute('value')} に設定しました")
+                    break
+        # 休憩
+        if input.break_start:
+            logger.info("休憩入力")
+            breakTimewrite(_tr, driver, wait, input)
+        try:
+            # 更新ボタンを待機してクリック
+            updbtn = wait.until(lambda drv: drv.find_element(By.ID, "UPDATE-BTN"))
+            updbtn.click()
+            logger.info("更新ボタンをクリックしました")
+
+            # アラートが表示されるのを待つ → クリックが効いた証拠になる
+            alert = wait.until(EC.alert_is_present())
+            logger.info(" アラートを検出しました：ボタン押下に成功")
+            alert.accept()
+
+        except TimeoutException:
+            logger.info("アラートが表示されませんでした。更新ボタンのクリックが反映されなかった可能性があります")
+        
+    except TimeoutException as e:
+        logger.exception(e)
+        logger.info(f"現在のURL: {driver.current_url}")
+        logger.info(f"タイトル: {driver.title}")
+        logger.debug(driver.page_source[:1000])  # ソースが長いときは先頭のみ
+        raise
+    time.sleep(WAIT_TIME)
+    return "recoru入力完了"
+def breakTimewrite(_tr, driver:webdriver, wait:WebDriverWait, input:TemplateInput):
+    try:
+        # 休憩編集アイコンを取得
+        break_time = _tr.find_element(By.CSS_SELECTOR, "[class='ow btn-edit tip']")
+        imgs = break_time.find_elements(By.TAG_NAME, "img")
+
+        # 画像をクリック（要素数によって分岐）
+        if len(imgs) != 1:
+            imgs[1].click()
+        else:
+            imgs[0].click()
+
+        time.sleep(WAIT_TIME)  # ChromeDriverUtil.sleep() の代替
+        logger.info("休憩画面")
+
+        # 休憩開始時間入力
+        logger.info("休憩開始入力")
+        kyustr = wait.until(EC.presence_of_element_located((By.ID, "breaktimeDtos[0].breaktimeStart")))
+        kyustr.clear()
+        kyustr.send_keys(input.break_start)
+
+        # 休憩終了時間を計算して入力
+        logger.info("休憩終了入力")
+        kyuend = wait.until(EC.presence_of_element_located((By.ID, "breaktimeDtos[0].breaktimeEnd")))
+        kyuend.clear()
+
+        # Python側のCalcKyukei関数（別途定義が必要）
+        kyu_end_calc = calc_kyukei(input)
+        kyuend.send_keys(kyu_end_calc)
+        logger.info(f"休憩終了{kyu_end_calc}入力完了")
+
+        # 更新ボタンをクリック（2番目の要素）
+        update_buttons = wait.until(EC.presence_of_all_elements_located((By.ID, "UPDATE-BTN")))
+        update_buttons[1].click()
+
+        # アラートが表示されるのを待つ → クリックが効いた証拠になる
+        alert = wait.until(EC.alert_is_present())
+        logger.info(" アラートを検出しました：ボタン押下に成功")
+        alert.accept()
+
+        time.sleep(WAIT_TIME) 
+
+        # 「閉じる」ボタンが存在すればクリック
+        close_buttons = driver.find_elements(By.CSS_SELECTOR, ".common-btn.close")
+        if close_buttons:
+            try:
+                close_buttons[0].click()
+                logger.info("✅ 閉じるボタンをクリックしました")
+            except Exception as e:
+                logger.info(f"❗ クリック時にエラー: {e}")
+        else:
+            logger.info("⚠️ 閉じるボタンは存在しませんでした")
+        time.sleep(WAIT_TIME)  # ChromeDriverUtil.sleep() の代替
+    except TimeoutException:
+        logger.info(f"現在のURL: {driver.current_url}")
+        logger.info(f"タイトル: {driver.title}")
+        logger.debug(driver.page_source[:1000])  # ソースが長いときは先頭のみ
+        raise
+
+def calc_kyukei(input:TemplateInput):
+    HOUTEI_TIME = float(config["DEFAULT"]["houtei"])
+    def parse_time_string(time_str):
+        """ 'HHmm' または 'HH:mm' を datetime に変換 """
+        try:
+            if len(time_str) == 4 and time_str.isdigit():
+                return datetime.strptime(time_str, "%H%M")
+            else:
+                return datetime.strptime(time_str, "%H:%M")
+        except ValueError:
+            raise ValueError(f"時間形式が不正です: {time_str}")
+
+    str_time = parse_time_string(input.start)
+    end_time = parse_time_string(input.end)
+    kyu_str_time = parse_time_string(input.break_start)
+
+    work_duration = end_time - str_time
+
+    # 勤務時間に応じて休憩時間を加算
+    if work_duration >= timedelta(hours=HOUTEI_TIME):
+        kyu_end = kyu_str_time + timedelta(minutes=60)
+    else:
+        kyu_end = kyu_str_time + timedelta(minutes=45)
+
+    return kyu_end.strftime("%H:%M")
+
+
+
+
+
+def initChrome():
+    driver = None  # ← 先に初期化
+    try:
+        driver = create_driver()
+        wait = WebDriverWait(driver, 20)
+
+        return driver, wait
+    except Exception as e:
+        logger.exception("Chromeの初期化に失敗しました。")
+        raise
+
+
+def lambda_handler(event, context):
+    expire_at = int((datetime.utcnow() + timedelta(days=1)).timestamp())
+    try:
+        logger.info("受信イベント: %s", json.dumps(event))
+        # DynamoDBテーブルをインスタンス化
+        table = dynamodb.Table(RESULT_TABLE_NAME)
+        for record in event['Records']:
+            message_body = json.loads(record['body'])
+            requestId = message_body['requestId']
+
+            rows = message_body['rows']
+            # rows から TemplateInput を生成
+            results = []
+            driver, wait = initChrome()
+            for r in rows:
+                try:
+                    result = {"id": r.get("id"), "msgs": []}
+                    logger.info(r)
+                    result['id'] = r["id"]
+                    input = TemplateInput("")  # raw_text は空でOK
+                    input.date = r["date"]
+                    input.start = r["start"]
+                    input.end = r["end"]
+                    input.break_start = r["breakStart"]
+                    input.rakuraku1 = r["rakuPattern"]
+                    input.rakuraku2 = r["rakuPattern2"]
+
+                    # 日付整形（YY/MM/DD → YYYY/MM/DD）
+                    input.date = datetime.strptime(
+                        input.date, "%Y-%m-%d"
+                    ).strftime("%Y/%m/%d")
+
+                    # 楽楽精算
+                    login_raku(driver, wait)
+                    msg1 = get_input_rakuraku_patterns(driver, wait, input)
+                    logger.info(msg1)
+                    if isinstance(msg1,str):
+                        result["msgs"].append(msg1)
+                    result["msgs"].append("楽楽精算入力完了")
+
+                    # recoru
+                    driver, wait = initChrome()
+                    login_recoru(driver, wait)
+                    recoru_msg = input_recoru(driver, wait, input)
+                    if recoru_msg:
+                        result["msgs"].append(recoru_msg)
+                    result["msgs"].append("成功")
+                except Exception as e:
+                        result["msgs"].append(f"エラー: {e}")
+                        continue
+                results.append(result)
+            driver.quit()       
+            # 結果をDynamoDBに保存
+            table.put_item(
+                Item={
+                    'requestId': requestId,
+
+                    'status': 'COMPLETED',
+
+                    'results': results,
+
+                    "expireAt": expire_at  # ← TTL
+
+                }
+            )
+
+    except Exception as e:
+        logger.exception("lambda_handler error")
+        table.put_item(
+            Item={
+                'requestId': requestId,
+                'status': 'FAILED',
+                'error': str(e),
+                "expireAt": expire_at  # ← TTL
+            }
+        )
+        raise e # SQSにメッセージを戻すために例外を投げる
+
+
+if __name__ == "__main__":
+    mock_event = {
+        "body": json.dumps({
+            "events": [
+                
+            ]
+        })
+    }
+
+    response = lambda_handler(mock_event, {})
+    print(response)
