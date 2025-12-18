@@ -148,7 +148,9 @@ export default function Result({ results }: ResultProps) {
           }
 
         } catch (error) {
-          // ... (エラー処理) ...
+            clearInterval(intervalId);
+            reject(new Error("例外エラー"));
+            return;
         }
       }, POLLING_INTERVAL_MS);
     });
