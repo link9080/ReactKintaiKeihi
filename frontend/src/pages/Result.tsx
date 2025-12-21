@@ -29,8 +29,8 @@ type ApiResult = {
 };
 
 const apiUri = import.meta.env.VITE_API_URI;
-const POLLING_INTERVAL_MS = 3000; // 3秒ごとに結果を問い合わせる
-const MAX_POLLING_ATTEMPTS = 60; // 最大試行回数 (3秒 * 60回 = 180秒 = 3分まで待機)
+const POLLING_INTERVAL_MS = 10000; // 10秒ごとに結果を問い合わせる
+const MAX_POLLING_ATTEMPTS = import.meta.env.VITE_MAX_ATTEMPTS; // 最大試行回数 (3秒 * 60回 = 180秒 = 10分まで待機)
 
 
 export default function Result({ results }: ResultProps) {
