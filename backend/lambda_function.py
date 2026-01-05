@@ -76,18 +76,10 @@ def login_raku(driver, wait):
 def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:TemplateInput = None):
     try:
         # 「交通費精算」が作成されていないか確認
-        try:
-            # 先に「交通費精算」があるかチェック
-            koutuhi = driver.find_elements(By.CSS_SELECTOR, "span[title='交通費精算']")
-            if koutuhi:  # 見つかった場合
-                raise TimeoutException("交通費精算が存在しない為 badge 処理をスキップ")
-            # ui-c-badge または szb-badge を探す
-            badges = wait.until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, ".ui-c-badge, .szb-badge")
-                )
-            )
-            # 最初の要素を判定
+        # badge をチェック
+        badges = driver.find_elements(By.CSS_SELECTOR, ".ui-c-badge, .szb-badge")
+
+        if badges:
             first_badge = badges[0]
             badge_class = first_badge.get_attribute("class")
 
@@ -97,14 +89,18 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
                 logger.info("szb-badge を取得しました")
             else:
                 logger.info(f"想定外のbadgeを取得: {badge_class}")
-            first_badge.click()
-            
-        except TimeoutException:
-            # 「ui-c-badge」が見つからなかった場合は「交通費精算」のリンクをクリック
-            logger.info("badgeが見つからなかったため、交通費精算をクリックします")
-            newpage = wait.until(EC.presence_of_all_elements_located((By.LINK_TEXT, "交通費精算")))[0]
-            newpage.click()
 
+            first_badge.click()
+
+        else:
+            logger.info("badgeが無いため、交通費精算をクリックします")
+            newpage = driver.find_elements(By.LINK_TEXT, "交通費精算")
+            if newpage:
+                newpage[0].click()
+            else:
+                logger.warning("交通費精算リンクも見つかりませんでした")
+
+            
         time.sleep(WAIT_TIME)
 
         # ウィンドウ切り替え
@@ -151,17 +147,6 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
             logger.info("すでに通勤費画面です")
 
         logger.info("楽楽清算-通勤費画面")
-        # 明細ウィンドウのハンドルを取得（最後のウィンドウ）
-        meisai_window = wait.until(
-            lambda drv: drv.window_handles[-1]
-        )
-        # 既存日付の取得
-        try:
-            daylists = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "labelColorDefault")))
-        except TimeoutException:
-            daylists = []
-        
-        created_days = [d.text for d in daylists]
 
         # マイパターンボタンをクリック
         meisai_insert_buttons = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".meisai-insert-button")))
