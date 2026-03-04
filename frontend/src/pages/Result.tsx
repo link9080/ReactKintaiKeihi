@@ -51,22 +51,23 @@ export default function Result({ results }: ResultProps) {
     },
   ]);
 
-  // --- 行追加 ---
+  // --- 行追加（1行目の内容をコピー） ---
   const handleAddRow = () => {
-    setRows((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        date: "",
-        start: "",
-        end: "",
-        breakStart: "",
-        rakuPattern: results.length > 0 ? results[0].id : "",
-        rakuPatternCombo: results.map((p) => p.id),
-        rakuPattern2: results.length > 0 ? results[0].id : "",
-        rakuPatternCombo2: results.map((p) => p.id),
-      },
-    ]);
+    setRows((prev) => {
+      // 1行目のデータを取得
+      const firstRow = prev[0];
+
+      // 新しい行のオブジェクトを作成
+      const newRow: WorkRow = {
+        ...firstRow,             // 1行目の内容をすべてコピー
+        id: crypto.randomUUID(), // IDだけは新しく発番
+        msgs: undefined,         // エラー・成功メッセージはクリア
+        // 日付だけは空に
+        date: "", 
+      };
+
+      return [...prev, newRow];
+    });
   };
 
   const handleChange = (id: string, field: keyof WorkRow, value: string) => {
@@ -148,9 +149,9 @@ export default function Result({ results }: ResultProps) {
           }
 
         } catch (error) {
-            clearInterval(intervalId);
-            reject(new Error("例外エラー"));
-            return;
+          clearInterval(intervalId);
+          reject(new Error("例外エラー"));
+          return;
         }
       }, POLLING_INTERVAL_MS);
     });
@@ -215,115 +216,117 @@ export default function Result({ results }: ResultProps) {
 
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6 flex justify-center items-start">
+    <div className="min-h-screen bg-gray-100 p-2 md:p-6 flex justify-center items-start">
       <Toaster />
-      <div className="bg-white shadow-md rounded p-6 w-full max-w-5xl">
-        <h1 className="text-2xl font-bold mb-6">勤怠データ編集</h1>
+      <div className="bg-white shadow-md rounded p-4 md:p-6 w-full max-w-5xl">
+        <h1 className="text-xl md:text-2xl font-bold mb-6">勤怠データ編集</h1>
 
         <button
           onClick={handleAddRow}
-          className="mb-4 px-3 py-1 bg-green-600 text-white rounded"
+          className="mb-4 w-full md:w-auto px-4 py-2 bg-green-600 text-white rounded font-bold"
         >
           ＋ 行を追加
         </button>
-        <div className="overflow-x-auto">
-          <table className="min-w-[700px] border-collapse border text-sm">
-            <thead>
+
+        {/* テーブルタグに block md:table を指定してスマホではテーブルを解除 */}
+        <div className="w-full">
+          <table className="w-full border-collapse md:border text-sm block md:table">
+            <thead className="hidden md:table-header-group">
               <tr className="bg-gray-200 text-left">
                 <th className="border p-2">日付</th>
                 <th className="border p-2">開始</th>
                 <th className="border p-2">終了</th>
                 <th className="border p-2">休憩開始</th>
-                <th className="border p-2">楽楽精算パターン</th>
-                <th className="border p-2">楽楽精算パターン2</th>
+                <th className="border p-2">パターン1</th>
+                <th className="border p-2">パターン2</th>
                 <th className="border p-2">結果</th>
               </tr>
             </thead>
-            <tbody>
+
+            <tbody className="block md:table-row-group">
               {rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="border p-2">
+                <tr
+                  key={row.id}
+                  className="block md:table-row border rounded-lg mb-4 p-4 bg-gray-50 md:bg-white md:border-b md:mb-0 relative shadow-sm md:shadow-none"
+                >
+                  {/* 各セルにラベルを付けてスマホで見やすくする */}
+                  <td className="block md:table-cell p-1 md:p-2">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">日付</span>
                     <input
                       type="date"
                       value={row.date}
                       onChange={(e) => handleChange(row.id, "date", e.target.value)}
-                      className="w-full border p-1"
+                      className="w-full border p-2 rounded md:p-1"
                     />
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0">
+
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">開始</span>
                     <input
                       type="time"
                       value={row.start}
                       onChange={(e) => handleChange(row.id, "start", e.target.value)}
-
-                      className="w-full border p-1"
+                      className="w-full border p-2 rounded md:p-1"
                     />
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">終了</span>
                     <input
                       type="time"
                       value={row.end}
                       onChange={(e) => handleChange(row.id, "end", e.target.value)}
-                      className="w-full border p-1"
+                      className="w-full border p-2 rounded md:p-1"
                     />
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">休憩開始</span>
                     <input
                       type="time"
                       value={row.breakStart}
                       onChange={(e) => handleChange(row.id, "breakStart", e.target.value)}
-                      className="w-full border p-1"
+                      className="w-full border p-2 rounded md:p-1"
                     />
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">パターン1</span>
                     <select
                       value={row.rakuPattern}
-                      onChange={(e) =>
-                        handleChange(row.id, "rakuPattern", e.target.value)
-                      }
-
-                      className="w-full border p-1"
+                      onChange={(e) => handleChange(row.id, "rakuPattern", e.target.value)}
+                      className="w-full border p-2 rounded md:p-1 bg-white"
                     >
                       {results.map((opt) => (
-                        <option key={opt.id} value={opt.id}>
-                          {opt.label}
-                        </option>
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
                       ))}
                     </select>
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">パターン2</span>
                     <select
                       value={row.rakuPattern2}
-                      onChange={(e) =>
-                        handleChange(row.id, "rakuPattern2", e.target.value)
-                      }
-
-                      className="w-full border p-1"
+                      onChange={(e) => handleChange(row.id, "rakuPattern2", e.target.value)}
+                      className="w-full border p-2 rounded md:p-1 bg-white"
                     >
                       {results.map((opt) => (
-                        <option key={opt.id} value={opt.id}>
-                          {opt.label}
-                        </option>
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
                       ))}
                     </select>
                   </td>
-                  <td className="border p-2">
+
+                  <td className="block md:table-cell p-1 md:p-2 mt-2 md:mt-0 border-t md:border-none pt-2 md:pt-0">
+                    <span className="md:hidden font-bold text-gray-600 block mb-1">実行結果</span>
                     {row.msgs && row.msgs.length > 0 ? (
-                      <div
-                        className={`text-sm whitespace-nowrap ${row.msgs.includes("成功")
-                          ? "text-green-600"
-                          : "text-red-600"
-                          }`}
-                      >
-                        {row.msgs.map((m, i) => (
-                          <div key={i}>{m}</div>
-                        ))}
+                      <div className={`text-sm ${row.msgs.some(m => m.includes("成功")) ? "text-green-600" : "text-red-600"}`}>
+                        {row.msgs.map((m, i) => <div key={i}>{m}</div>)}
                       </div>
                     ) : (
                       <span className="text-gray-400">-</span>
                     )}
                   </td>
-
                 </tr>
               ))}
             </tbody>
@@ -334,9 +337,9 @@ export default function Result({ results }: ResultProps) {
           <button
             onClick={handleSubmit}
             disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+            className="w-full md:w-auto px-8 py-3 bg-blue-600 text-white rounded-lg font-bold disabled:opacity-50"
           >
-            {loading ? "送信中..." : "送信"}
+            {loading ? "送信中..." : "勤怠データを送信"}
           </button>
         </div>
       </div>
