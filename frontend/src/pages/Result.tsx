@@ -29,7 +29,7 @@ type ApiResult = {
 };
 
 const apiUri = import.meta.env.VITE_API_URI;
-const POLLING_INTERVAL_MS = 10000; // 10秒ごとに結果を問い合わせる
+const POLLING_INTERVAL_MS = import.meta.env.VITE_POOL_MINUTUS * 100; // 秒ごとに結果を問い合わせる
 const MAX_POLLING_ATTEMPTS = import.meta.env.VITE_MAX_ATTEMPTS; // 最大試行回数 (3秒 * 60回 = 180秒 = 10分まで待機)
 
 
@@ -84,9 +84,6 @@ export default function Result({ results }: ResultProps) {
     "date",
     "start",
     "end",
-    "breakStart",
-    "rakuPattern",
-    "rakuPattern2",
   ];
 
 
@@ -124,8 +121,6 @@ export default function Result({ results }: ResultProps) {
             // ★ ここで action: "pollResults" と jobId を送信 ★
             body: JSON.stringify({ action: "pollResults", requestId: requestId }),
           });
-
-          // ... (省略: res.ok, data.status のチェックロジックは以前と同じ) ...
 
           const data = await res.json();
 

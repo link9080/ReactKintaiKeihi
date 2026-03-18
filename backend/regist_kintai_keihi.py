@@ -24,13 +24,12 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 RESULT_TABLE_NAME = os.environ["TABLE"] 
 
-# DynamoDB リソースを初期化 (グローバルに実行すると高速化されます)
+# DynamoDB リソースを初期化
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(RESULT_TABLE_NAME)
 WAIT_TIME = 2
 
-# Lambdaのデフォルトログハンドラーは既に設定されているので、
-# 追加設定が不要なケースが多いが、フォーマット指定を追加する場合は以下
+# Lambdaのデフォルトログハンドラー
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s")
@@ -278,7 +277,7 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
                 time.sleep(WAIT_TIME)
                 driver.switch_to.window(driver.window_handles[-1])
 
-            if input.rakuraku2:
+            if input.rakuraku2 and not input.zaitaku:
                     # チェックボックスを取得して選択
                     chks = wait.until(EC.presence_of_all_elements_located((By.NAME, "kakutei")))
                     for chk in chks:
