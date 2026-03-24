@@ -79,21 +79,31 @@ export default function Result({ results }: ResultProps) {
   };
 
 
-  // 必須項目キー一覧
+  /// 必須項目キー一覧（単体で値が入っていないといけないもの）
   const requiredKeys: (keyof WorkRow)[] = [
     "date",
-    "start",
-    "end",
   ];
 
-
-  // 空チェック用関数
-  const isFilled = (row: WorkRow) =>
-    requiredKeys.every((key) => {
+  // バリデーション用関数
+  const isFilled = (row: WorkRow) => {
+    // 1. 基本的な必須チェック（date など）
+    const hasRequired = requiredKeys.every((key) => {
       const v = row[key];
       return v !== null && v !== undefined && String(v).trim() !== "";
     });
 
+    // 2. start と end のペアチェック
+    // 「両方入力されている」または「両方空」ならOK、片方だけならNG
+    const s = String(row.start || "").trim();
+    const e = String(row.end || "").trim();
+    
+    // 両方の入力状態（boolean）が一致しているかを確認
+    const isTimePairValid = (s !== "") === (e !== "");
+
+    // 3. 最終判定：必須項目があり、かつ時刻がペアで入力されている、かつ時刻が空ではない
+    // ※「送信」対象とするなら、s と e が空文字でないことも確認する必要があります。
+    return hasRequired && isTimePairValid && s !== "" && e !== "";
+  };
   // --- 送信処理---
   const applyApiResults = (apiResults: ApiResult[]) => {
     setRows(prev =>
