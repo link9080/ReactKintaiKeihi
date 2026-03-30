@@ -63,7 +63,7 @@ export default function Result({ results }: ResultProps) {
         id: crypto.randomUUID(), // IDだけは新しく発番
         msgs: undefined,         // エラー・成功メッセージはクリア
         // 日付だけは空に
-        date: "", 
+        date: "",
       };
 
       return [...prev, newRow];
@@ -92,17 +92,26 @@ export default function Result({ results }: ResultProps) {
       return v !== null && v !== undefined && String(v).trim() !== "";
     });
 
-    // 2. start と end のペアチェック
-    // 「両方入力されている」または「両方空」ならOK、片方だけならNG
+    // 2. start と end の入力状態を確認
     const s = String(row.start || "").trim();
     const e = String(row.end || "").trim();
-    
-    // 両方の入力状態（boolean）が一致しているかを確認
-    const isTimePairValid = (s !== "") === (e !== "");
 
-    // 3. 最終判定：必須項目があり、かつ時刻がペアで入力されている、かつ時刻が空ではない
-    // ※「送信」対象とするなら、s と e が空文字でないことも確認する必要があります。
-    return hasRequired && isTimePairValid && s !== "" && e !== "";
+    const hasStart = s !== "";
+    const hasEnd = e !== "";
+
+    // 「どちらか一方が入力されている」状態を特定
+    const isAnyTimeFilled = hasStart || hasEnd;
+
+    // 開始終了どちらも入力されていない場合、楽楽精算のみの入力のためチェック終了
+    if (!isAnyTimeFilled) return true
+
+    // 「両方入力されているか」を確認（片方だけならNG）
+    const isTimePairComplete = hasStart && hasEnd;
+
+    // 3. 最終判定
+    // 時刻が1つでも入っているなら、ペアが揃っていることが必須
+    // かつ、そもそも時刻が全く入っていない行は送信対象外とする
+    return hasRequired && isAnyTimeFilled && isTimePairComplete;
   };
   // --- 送信処理---
   const applyApiResults = (apiResults: ApiResult[]) => {
