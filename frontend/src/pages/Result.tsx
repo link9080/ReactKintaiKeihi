@@ -164,7 +164,7 @@ export default function Result({ results }: ResultProps) {
 
         } catch (error) {
           clearInterval(intervalId);
-          reject(new Error("例外エラー"));
+          reject(new Error(`例外エラー(${error})`));
           return;
         }
       }, POLLING_INTERVAL_MS);
@@ -221,8 +221,8 @@ export default function Result({ results }: ResultProps) {
       toast.success("すべての処理が完了し、結果を反映しました。");
 
       toast("送信が完了しました");
-    } catch {
-      toast("送信中にエラーが発生しました");
+    } catch (err){
+      toast(`送信中にエラーが発生しました(${err})`);
     } finally {
       setLoading(false);
     }

@@ -38,7 +38,7 @@ export default function Login({ onSuccess }: LoginProps) {
         toast.error("パスワードが違います");
       }
     } catch (err) {
-      toast.error("通信エラーが発生しました");
+      toast.error(`通信エラーが発生しました${err}`);
     } finally {
       setLoading(false); // スピナー終了
     }

@@ -43,7 +43,7 @@ export default function App() {
       setIsLoggedIn(true);
     } catch (err) {
       console.error(err);
-      toast.error("楽楽精算パターンの取得に失敗しました");
+      toast.error(`楽楽精算パターンの取得に失敗しました(${err})`);
       setIsLoggedIn(false);
     } finally {
       setLoading(false);
