@@ -29,6 +29,13 @@ export default function Login({ onSuccess }: LoginProps) {
         }),
       });
 
+      if (!res.ok) {
+        // Lambdaの Exception 時に返される {"error": "..."} を取得
+        const errorData = await res.json().catch(() => ({}));
+        const msg = errorData.error || `ステータス: ${res.status}`;
+        throw new Error(msg);
+      }
+
       const data = await res.json();
 
       if (data.login) {

@@ -23,7 +23,10 @@ export default function App() {
       });
 
       if (!res.ok) {
-        throw new Error("APIエラー");
+        // Lambdaの Exception 時に返される {"error": "..."} を取得
+        const errorData = await res.json().catch(() => ({}));
+        const msg = errorData.error || `ステータス: ${res.status}`;
+        throw new Error(msg);
       }
 
       const data = await res.json();

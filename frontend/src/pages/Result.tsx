@@ -141,6 +141,13 @@ export default function Result({ results }: ResultProps) {
             body: JSON.stringify({ action: "pollResults", requestId: requestId }),
           });
 
+          if (!res.ok) {
+            // Lambdaの Exception 時に返される {"error": "..."} を取得
+            const errorData = await res.json().catch(() => ({}));
+            const msg = errorData.error || `ステータス: ${res.status}`;
+            throw new Error(msg);
+          }
+
           const data = await res.json();
 
           if (data.status === 'COMPLETED') {
@@ -199,7 +206,10 @@ export default function Result({ results }: ResultProps) {
 
 
       if (!res.ok) {
-        throw new Error(`HTTPエラー: ${res.status}`);
+        // Lambdaの Exception 時に返される {"error": "..."} を取得
+        const errorData = await res.json().catch(() => ({}));
+        const msg = errorData.error || `ステータス: ${res.status}`;
+        throw new Error(msg);
       }
 
       const reqData = await res.json();
@@ -221,7 +231,7 @@ export default function Result({ results }: ResultProps) {
       toast.success("すべての処理が完了し、結果を反映しました。");
 
       toast("送信が完了しました");
-    } catch (err){
+    } catch (err) {
       toast(`送信中にエラーが発生しました(${err})`);
     } finally {
       setLoading(false);
