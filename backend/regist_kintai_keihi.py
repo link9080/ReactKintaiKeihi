@@ -27,6 +27,7 @@ RESULT_TABLE_NAME = os.environ["TABLE"]
 # DynamoDB リソースを初期化
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(RESULT_TABLE_NAME)
+ssm = boto3.client('ssm')
 WAIT_TIME = 2
 
 # Lambdaのデフォルトログハンドラー
@@ -36,23 +37,68 @@ if not logger.hasHandlers():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# 設定ファイル読み込み
-config = configparser.ConfigParser()
-config.read('config.ini')
+def get_parameters_from_ssm():
+    """
+    SSMパラメータストアから一括で設定を取得する
+    """
+    # パラメータ名をリストで指定（パス形式 "/my-app/raku_url" などが管理しやすく推奨）
+    # ここでは SecureString を含むため WithDecryption=True にします
+    names = [
+        'rakuURL',
+        '/rakuURL/id',
+        '/rakuURL/pass',
+        'recoruURL',
+        '/recoruURL/kigyo',
+        '/recoruURL/id',
+        '/recoruURL/pass',
+        'houtei'
+    ]
+    
+    try:
+        response = ssm.get_parameters(
+            Names=names,
+            WithDecryption=True
+        )
+        
+        # 取得したパラメータを辞書形式に変換
+        params = {p['Name']: p['Value'] for p in response['Parameters']}
+        
+        # 存在チェック（取得漏れがないか）
+        for name in names:
+            if name not in params:
+                logger.error(f"Parameter {name} not found in SSM")
+        
+        return params
+    except Exception as e:
+        logger.exception("SSMからのパラメータ取得に失敗しました")
+        raise
+# --- ハンドラーの外で設定をロード (Cold Start時に一度だけ実行) ---
+ssm_params = get_parameters_from_ssm()
+# 使いやすいように変数をマッピング（従来の CONF の代わり）
+CONF = {
+    'raku_url': ssm_params.get('rakuURL'),
+    'raku_login_id': ssm_params.get('/rakuURL/id'),
+    'raku_password': ssm_params.get('/rakuURL/pass'),
+    'reco_url': ssm_params.get('recoruURL'),
+    'reco_kigyo': ssm_params.get('/recoruURL/kigyo'),
+    'reco_login_id': ssm_params.get('/recoruURL/id'),
+    'reco_password': ssm_params.get('/recoruURL/pass'),
+    'houtei': ssm_params.get('houtei', "8.0") # デフォルト値
+}
 
 def format_to_yyyymmdd(date_str: str) -> str:
     return datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y%m%d")
 
 def login_raku(driver, wait):
-    driver.get(config['DEFAULT']['raku_url'])  # rakuurlの部分
+    driver.get(CONF['raku_url'])  # rakuurlの部分
     time.sleep(WAIT_TIME)
     logger.info(f"url:{driver.current_url}title:{driver.title}")
     # 企業IDを入力
     kigyo_element = wait.until(EC.presence_of_element_located((By.NAME, "loginId")))
-    kigyo_element.send_keys(config['DEFAULT']['raku_login_id'])
+    kigyo_element.send_keys(CONF['raku_login_id'])
 
     pass_element = wait.until(EC.presence_of_element_located((By.NAME, "password")))
-    pass_element.send_keys(config['DEFAULT']['raku_password'])
+    pass_element.send_keys(CONF['raku_password'])
     pass_element.send_keys(Keys.ENTER)
 
     time.sleep(WAIT_TIME)  # ページ遷移待ちなど適宜調整
@@ -64,20 +110,20 @@ def login_raku(driver, wait):
 def login_recoru(driver:webdriver, wait:WebDriverWait):
     try:
         # recoruのURLにアクセス
-        driver.get(config['DEFAULT']['reco_url'])
+        driver.get(CONF['reco_url'])
         logger.info(f"url:{driver.current_url}title:{driver.title}")
 
         # 企業IDを入力
         kigyo_element = wait.until(lambda drv: drv.find_element(By.ID, "contractId"))
-        kigyo_element.send_keys(config['DEFAULT']["reco_kigyo"])
+        kigyo_element.send_keys(CONF["reco_kigyo"])
 
         # メールアドレスを入力
         mail_element = wait.until(lambda drv: drv.find_element(By.ID, "authId"))
-        mail_element.send_keys(config['DEFAULT']["reco_login_id"])
+        mail_element.send_keys(CONF["reco_login_id"])
 
         # パスワードを入力してEnterキー
         pass_element = wait.until(lambda drv: drv.find_element(By.ID, "password"))
-        pass_element.send_keys(config['DEFAULT']["reco_password"])
+        pass_element.send_keys(CONF["reco_password"])
         pass_element.send_keys(Keys.ENTER)
 
         # 少し待機（ログイン処理のため）
@@ -338,15 +384,9 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
 
             if len(save_buttons) > 0:
                 save_buttons[0].click()
-    except TimeoutException as te:
-        logger.info(te)
-        raise
-    except NoSuchElementException as ne:
-        logger.info(ne)
-        raise
     except Exception as e:
-        logger.info(e)
-        raise
+        logger.error(e)
+        raise e
     return raku_ptns
 
 def input_recoru(driver:webdriver, wait:WebDriverWait, input:TemplateInput):
@@ -497,7 +537,7 @@ def breakTimewrite(_tr, driver:webdriver, wait:WebDriverWait, input:TemplateInpu
         raise
 
 def calc_kyukei(input:TemplateInput):
-    HOUTEI_TIME = float(config["DEFAULT"]["houtei"])
+    HOUTEI_TIME = float(CONF["houtei"])
     def parse_time_string(time_str):
         """ 'HHmm' または 'HH:mm' を datetime に変換 """
         try:

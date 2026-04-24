@@ -26,9 +26,10 @@ logger.setLevel(logging.INFO)
 RESULT_TABLE_NAME = os.environ["TABLE"]
 QUEUE_URL = os.environ["QUEUE_URL"]
 
-# DynamoDB リソースを初期化 (グローバルに実行すると高速化されます)
+# リソースを初期化 (グローバルに実行すると高速化されます)
 dynamodb = boto3.resource('dynamodb')
 sqs = boto3.client("sqs")
+ssm = boto3.client('ssm')
 table = dynamodb.Table(RESULT_TABLE_NAME)
 WAIT_TIME = 2
 
@@ -40,9 +41,55 @@ if not logger.hasHandlers():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# 設定ファイル読み込み
-config = configparser.ConfigParser()
-config.read('config.ini')
+
+def get_parameters_from_ssm():
+    """
+    SSMパラメータストアから一括で設定を取得する
+    """
+    # パラメータ名をリストで指定（パス形式 "/my-app/raku_url" などが管理しやすく推奨）
+    # ここでは SecureString を含むため WithDecryption=True にします
+    names = [
+        'rakuURL',
+        '/rakuURL/id',
+        '/rakuURL/pass',
+        'recoruURL',
+        '/recoruURL/kigyo',
+        '/recoruURL/id',
+        '/recoruURL/pass',
+        'houtei'
+    ]
+    
+    try:
+        response = ssm.get_parameters(
+            Names=names,
+            WithDecryption=True
+        )
+        
+        # 取得したパラメータを辞書形式に変換
+        params = {p['Name']: p['Value'] for p in response['Parameters']}
+        
+        # 存在チェック（取得漏れがないか）
+        for name in names:
+            if name not in params:
+                logger.error(f"Parameter {name} not found in SSM")
+        
+        return params
+    except Exception as e:
+        logger.exception("SSMからのパラメータ取得に失敗しました")
+        raise
+# --- ハンドラーの外で設定をロード (Cold Start時に一度だけ実行) ---
+ssm_params = get_parameters_from_ssm()
+# 使いやすいように変数をマッピング（従来の CONF の代わり）
+CONF = {
+    'raku_url': ssm_params.get('rakuURL'),
+    'raku_login_id': ssm_params.get('/rakuURL/id'),
+    'raku_password': ssm_params.get('/rakuURL/pass'),
+    'reco_url': ssm_params.get('recoruURL'),
+    'reco_kigyo': ssm_params.get('/recoruURL/kigyo'),
+    'reco_login_id': ssm_params.get('/recoruURL/id'),
+    'reco_password': ssm_params.get('/recoruURL/pass'),
+    'houtei': ssm_params.get('houtei', "8.0") # デフォルト値
+}
 
 def format_to_yyyymmdd(date_str: str) -> str:
     return datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y%m%d")
@@ -56,15 +103,15 @@ def enqueue_job(request_id, rows):
         })
     )
 def login_raku(driver, wait):
-    driver.get(config['DEFAULT']['raku_url'])  # rakuurlの部分
+    driver.get(CONF['raku_url'])  # rakuurlの部分
     time.sleep(WAIT_TIME)
     logger.info(f"url:{driver.current_url}title:{driver.title}")
     # 企業IDを入力
     kigyo_element = wait.until(EC.presence_of_element_located((By.NAME, "loginId")))
-    kigyo_element.send_keys(config['DEFAULT']['raku_login_id'])
+    kigyo_element.send_keys(CONF['raku_login_id'])
 
     pass_element = wait.until(EC.presence_of_element_located((By.NAME, "password")))
-    pass_element.send_keys(config['DEFAULT']['raku_password'])
+    pass_element.send_keys(CONF['raku_password'])
     pass_element.send_keys(Keys.ENTER)
 
     time.sleep(WAIT_TIME)  # ページ遷移待ちなど適宜調整
@@ -185,15 +232,9 @@ def get_input_rakuraku_patterns(driver:webdriver, wait:WebDriverWait, input:Temp
                 ptn['label'] = tds[1].text
             raku_ptns.append(ptn)
         
-    except TimeoutException as te:
-        logger.info(te)
-        raise
-    except NoSuchElementException as ne:
-        logger.info(ne)
-        raise
     except Exception as e:
-        logger.info(e)
-        raise
+        logger.error(e)
+        raise e
     return raku_ptns
 
 def initChrome():
@@ -233,7 +274,7 @@ def lambda_handler(event, context):
         # ===========================
         if action == "login":
             password = body.get("password")
-            ok = password == config['DEFAULT']["reco_password"]
+            ok = password == CONF["reco_password"]
             logger.info(f"ログイン{ok}")
 
             return {
@@ -362,8 +403,8 @@ def lambda_handler(event, context):
         logger.exception("lambda_handler error")
         return {
             "statusCode": 500,
-            "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": str(e)})
+            "headers": headers,
+            "body": json.dumps({"error": str(e.msg)})
         }
 
 
